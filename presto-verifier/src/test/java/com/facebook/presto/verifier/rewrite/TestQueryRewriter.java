@@ -204,7 +204,7 @@ public class TestQueryRewriter
                 new JdbcPrestoAction(
                         PrestoExceptionClassifier.createDefault(),
                         CONFIGURATION,
-                        new VerificationContext(),
+                        VerificationContext.create(),
                         new PrestoClusterConfig()
                                 .setHost(queryRunner.getServer().getAddress().getHost())
                                 .setJdbcPort(queryRunner.getServer().getAddress().getPort()),

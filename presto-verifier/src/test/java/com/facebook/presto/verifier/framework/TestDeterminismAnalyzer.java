@@ -61,7 +61,7 @@ public class TestDeterminismAnalyzer
     private static DeterminismAnalyzer createDeterminismAnalyzer(String mutableCatalogPattern)
     {
         QueryConfiguration configuration = new QueryConfiguration(CATALOG, SCHEMA, Optional.of("user"), Optional.empty(), Optional.empty());
-        VerificationContext verificationContext = new VerificationContext();
+        VerificationContext verificationContext = VerificationContext.create();
         VerifierConfig verifierConfig = new VerifierConfig().setTestId("test-id");
         RetryConfig retryConfig = new RetryConfig();
         PrestoAction prestoAction = new JdbcPrestoAction(

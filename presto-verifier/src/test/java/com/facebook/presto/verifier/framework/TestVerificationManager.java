@@ -130,30 +130,23 @@ public class TestVerificationManager
     }
 
     @Test
-    public void testFailureRequeued()
+    public void testFailureResubmitted()
     {
         VerificationManager manager = getVerificationManager(ImmutableList.of(SOURCE_QUERY), new MockPrestoAction(HIVE_PARTITION_DROPPED_DURING_QUERY), VERIFIER_CONFIG);
         manager.start();
         assertEquals(manager.getQueriesSubmitted().get(), 3);
+        assertEquals(eventClient.getEvents().size(), 1);
+        assertEquals(eventClient.getEvents().get(0).getResubmissionCount(), 2);
     }
 
     @Test
-    public void testFailureNotRequeued()
+    public void testFailureNotSubmitted()
     {
         VerificationManager manager = getVerificationManager(ImmutableList.of(SOURCE_QUERY), new MockPrestoAction(GENERIC_INTERNAL_ERROR), VERIFIER_CONFIG);
         manager.start();
         assertEquals(manager.getQueriesSubmitted().get(), 1);
-    }
-
-    @Test
-    public void testFailureRequeueDisabled()
-    {
-        VerificationManager manager = getVerificationManager(
-                ImmutableList.of(SOURCE_QUERY),
-                new MockPrestoAction(HIVE_PARTITION_DROPPED_DURING_QUERY),
-                new VerifierConfig().setTestId("test").setVerificationResubmissionLimit(0));
-        manager.start();
-        assertEquals(manager.getQueriesSubmitted().get(), 1);
+        assertEquals(eventClient.getEvents().size(), 1);
+        assertEquals(eventClient.getEvents().get(0).getResubmissionCount(), 0);
     }
 
     @Test
