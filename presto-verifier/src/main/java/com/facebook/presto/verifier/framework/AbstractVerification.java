@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.verifier.framework;
 
-import com.facebook.airlift.log.Logger;
 import com.facebook.presto.jdbc.QueryStats;
 import com.facebook.presto.sql.SqlFormatter;
 import com.facebook.presto.sql.tree.Statement;
@@ -48,6 +47,7 @@ import static com.facebook.presto.verifier.framework.SkippedReason.CONTROL_QUERY
 import static com.facebook.presto.verifier.framework.SkippedReason.CONTROL_SETUP_QUERY_FAILED;
 import static com.facebook.presto.verifier.framework.SkippedReason.FAILED_BEFORE_CONTROL_QUERY;
 import static com.facebook.presto.verifier.framework.SkippedReason.NON_DETERMINISTIC;
+import static com.facebook.presto.verifier.framework.SkippedReason.VERIFIER_INTERNAL_ERROR;
 import static com.facebook.presto.verifier.framework.VerifierUtil.runAndConsume;
 import static com.facebook.presto.verifier.prestoaction.PrestoExceptionClassifier.shouldResubmit;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -62,7 +62,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 public abstract class AbstractVerification
         implements Verification
 {
-    private static final Logger log = Logger.get(AbstractVerification.class);
+    private static final String INTERNAL_ERROR = "VERIFIER_INTERNAL_ERROR";
 
     private final PrestoAction prestoAction;
     private final SourceQuery sourceQuery;
@@ -175,7 +175,7 @@ public abstract class AbstractVerification
                     determinismAnalysisDetails.build(),
                     Optional.empty());
         }
-        catch (QueryException e) {
+        catch (Throwable t) {
             return concludeVerification(
                     toOptional(control),
                     toOptional(test),
@@ -188,11 +188,7 @@ public abstract class AbstractVerification
                     controlChecksumQueryContext,
                     testChecksumQueryContext,
                     determinismAnalysisDetails.build(),
-                    Optional.of(e));
-        }
-        catch (Throwable t) {
-            log.error(t);
-            return new VerificationResult(this, false, Optional.empty());
+                    Optional.of(t));
         }
         finally {
             if (!resultMismatched || runTearDownOnResultMismatch) {
@@ -214,19 +210,19 @@ public abstract class AbstractVerification
             ChecksumQueryContext controlChecksumQueryContext,
             ChecksumQueryContext testChecksumQueryContext,
             DeterminismAnalysisDetails determinismAnalysisDetails,
-            Optional<QueryException> queryException)
+            Optional<Throwable> throwable)
     {
-        if (queryException.isPresent()
-                && shouldResubmit(queryException.get())
+        if (throwable.isPresent()
+                && shouldResubmit(throwable.get())
                 && verificationContext.getResubmissionCount() < verificationResubmissionLimit) {
             return new VerificationResult(this, true, Optional.empty());
         }
 
-        Optional<SkippedReason> skippedReason = getSkippedReason(controlState, determinismAnalysis);
+        Optional<SkippedReason> skippedReason = getSkippedReason(throwable, controlState, determinismAnalysis);
         Optional<String> resolveMessage = Optional.empty();
-        if (queryException.isPresent() && controlState == QueryState.SUCCEEDED) {
+        if (throwable.isPresent() && controlState == QueryState.SUCCEEDED) {
             checkState(controlStats.isPresent(), "controlQueryStats is missing");
-            resolveMessage = failureResolverManager.resolve(controlStats.get(), queryException.get(), test);
+            resolveMessage = failureResolverManager.resolve(controlStats.get(), throwable.get(), test);
         }
 
         EventStatus status;
@@ -246,11 +242,11 @@ public abstract class AbstractVerification
         Optional<String> errorCode = Optional.empty();
         Optional<String> errorMessage = Optional.empty();
         if (status != SUCCEEDED) {
-            errorCode = Optional.ofNullable(queryException.map(QueryException::getErrorCodeName)
+            errorCode = Optional.ofNullable(throwable.map(t -> t instanceof QueryException ? ((QueryException) t).getErrorCodeName() : INTERNAL_ERROR)
                     .orElse(matchResult.map(MatchResult::getMatchType)
                             .map(MatchType::name)
                             .orElse(null)));
-            errorMessage = Optional.of(constructErrorMessage(queryException, matchResult, controlState, testState));
+            errorMessage = Optional.of(constructErrorMessage(throwable, matchResult, controlState, testState));
         }
 
         VerifierQueryEvent event = new VerifierQueryEvent(
@@ -278,7 +274,9 @@ public abstract class AbstractVerification
                         testStats),
                 errorCode,
                 errorMessage,
-                queryException.map(QueryException::toQueryFailure),
+                throwable.filter(QueryException.class::isInstance)
+                        .map(QueryException.class::cast)
+                        .map(QueryException::toQueryFailure),
                 verificationContext.getQueryFailures(),
                 verificationContext.getResubmissionCount());
         return new VerificationResult(this, false, Optional.of(event));
@@ -317,8 +315,11 @@ public abstract class AbstractVerification
                 .collect(toImmutableList());
     }
 
-    private Optional<SkippedReason> getSkippedReason(QueryState controlState, Optional<DeterminismAnalysis> determinismAnalysis)
+    private Optional<SkippedReason> getSkippedReason(Optional<Throwable> throwable, QueryState controlState, Optional<DeterminismAnalysis> determinismAnalysis)
     {
+        if (throwable.isPresent() && !(throwable.get() instanceof QueryException)) {
+            return Optional.of(VERIFIER_INTERNAL_ERROR);
+        }
         switch (controlState) {
             case FAILED:
                 return Optional.of(CONTROL_QUERY_FAILED);
@@ -358,17 +359,25 @@ public abstract class AbstractVerification
     }
 
     private String constructErrorMessage(
-            Optional<QueryException> queryException,
+            Optional<Throwable> throwable,
             Optional<MatchResult> matchResult,
             QueryState controlState,
             QueryState testState)
     {
         StringBuilder message = new StringBuilder(format("Test state %s, Control state %s.\n\n", testState, controlState));
-        queryException.ifPresent(e -> message.append(e.getQueryStage().name().replace("_", " "))
-                .append(" query failed on ")
-                .append(e.getQueryStage().getTargetCluster())
-                .append(" cluster:\n")
-                .append(getStackTraceAsString(e.getCause())));
+        if (throwable.isPresent()) {
+            if (throwable.get() instanceof PrestoQueryException) {
+                PrestoQueryException exception = (PrestoQueryException) throwable.get();
+                message.append(exception.getQueryStage().name().replace("_", " "))
+                        .append(" query failed on ")
+                        .append(exception.getQueryStage().getTargetCluster())
+                        .append(" cluster:\n")
+                        .append(getStackTraceAsString(exception.getCause()));
+            }
+            else {
+                message.append(getStackTraceAsString(throwable.get()));
+            }
+        }
         matchResult.ifPresent(result -> message.append(result.getResultsComparison()));
         return message.toString();
     }
