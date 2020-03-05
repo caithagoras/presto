@@ -72,7 +72,7 @@ public abstract class AbstractVerification
     private final VerificationContext verificationContext;
 
     private final String testId;
-    private final boolean runTearDownOnResultMismatch;
+    private final boolean smartTeardown;
     private final int verificationResubmissionLimit;
 
     public AbstractVerification(
@@ -92,7 +92,7 @@ public abstract class AbstractVerification
         this.verificationContext = requireNonNull(verificationContext, "verificationContext is null");
 
         this.testId = requireNonNull(verifierConfig.getTestId(), "testId is null");
-        this.runTearDownOnResultMismatch = verifierConfig.isRunTeardownOnResultMismatch();
+        this.smartTeardown = verifierConfig.isSmartTeardown();
         this.verificationResubmissionLimit = verifierConfig.getVerificationResubmissionLimit();
     }
 
@@ -118,8 +118,6 @@ public abstract class AbstractVerification
     @Override
     public VerificationResult run()
     {
-        boolean resultMismatched = false;
-
         AtomicReference<QueryBundle> control = new AtomicReference<>();
         AtomicReference<QueryBundle> test = new AtomicReference<>();
         AtomicReference<QueryStats> controlStats = new AtomicReference<>();
@@ -131,6 +129,8 @@ public abstract class AbstractVerification
         Optional<MatchResult> matchResult = Optional.empty();
         Optional<DeterminismAnalysis> determinismAnalysis = Optional.empty();
         DeterminismAnalysisDetails.Builder determinismAnalysisDetails = DeterminismAnalysisDetails.builder();
+
+        Optional<VerificationResult> result = Optional.empty();
 
         try {
             // Rewrite queries
@@ -156,12 +156,8 @@ public abstract class AbstractVerification
             if (matchResult.get().isMismatchPossiblyCausedByNonDeterminism()) {
                 determinismAnalysis = Optional.of(determinismAnalyzer.analyze(control.get(), matchResult.get().getControlChecksum(), determinismAnalysisDetails));
             }
-            boolean maybeDeterministic = !determinismAnalysis.isPresent() ||
-                    determinismAnalysis.get().isDeterministic() ||
-                    determinismAnalysis.get().isUnknown();
-            resultMismatched = maybeDeterministic && !matchResult.get().isMatched();
 
-            return concludeVerification(
+            result = Optional.of(concludeVerification(
                     toOptional(control),
                     toOptional(test),
                     toOptional(controlStats),
@@ -173,10 +169,11 @@ public abstract class AbstractVerification
                     controlChecksumQueryContext,
                     testChecksumQueryContext,
                     determinismAnalysisDetails.build(),
-                    Optional.empty());
+                    Optional.empty()));
+            return result.get();
         }
         catch (Throwable t) {
-            return concludeVerification(
+            result = Optional.of(concludeVerification(
                     toOptional(control),
                     toOptional(test),
                     toOptional(controlStats),
@@ -188,10 +185,13 @@ public abstract class AbstractVerification
                     controlChecksumQueryContext,
                     testChecksumQueryContext,
                     determinismAnalysisDetails.build(),
-                    Optional.of(t));
+                    Optional.of(t)));
+            return result.get();
         }
         finally {
-            if (!resultMismatched || runTearDownOnResultMismatch) {
+            if (!smartTeardown
+                    || testState.get() != QueryState.SUCCEEDED
+                    || (result.isPresent() && result.get().getEvent().map(VerifierQueryEvent::getStatus).map(EventStatus::valueOf).equals(Optional.of(SUCCEEDED)))) {
                 teardownSafely(prestoAction, toOptional(control));
                 teardownSafely(prestoAction, toOptional(test));
             }
