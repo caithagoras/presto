@@ -58,6 +58,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static com.facebook.airlift.configuration.ConditionalModule.installModuleIf;
@@ -66,6 +67,7 @@ import static com.facebook.airlift.discovery.client.ServiceAnnouncement.serviceA
 import static com.facebook.airlift.json.JsonBinder.jsonBinder;
 import static com.facebook.presto.server.PrestoSystemRequirements.verifyJvmRequirements;
 import static com.facebook.presto.server.PrestoSystemRequirements.verifySystemTimeIsReasonable;
+import static com.facebook.presto.server.ServerConfig.SERVER_VERSION_CONFIG;
 import static com.google.common.base.Strings.nullToEmpty;
 import static java.util.Objects.requireNonNull;
 
@@ -126,6 +128,9 @@ public class PrestoServer
         modules.addAll(getAdditionalModules());
 
         Bootstrap app = new Bootstrap(modules.build());
+        if (getServerVersion().isPresent()) {
+            app.setRequiredConfigurationProperty(SERVER_VERSION_CONFIG, getServerVersion().get());
+        }
 
         try {
             Injector injector = app.strictConfig().initialize();
@@ -166,6 +171,11 @@ public class PrestoServer
     protected Iterable<? extends Module> getAdditionalModules()
     {
         return ImmutableList.of();
+    }
+
+    protected Optional<String> getServerVersion()
+    {
+        return Optional.empty();
     }
 
     private static void updateConnectorIds(Announcer announcer, CatalogManager metadata, ServerConfig serverConfig, NodeSchedulerConfig schedulerConfig)

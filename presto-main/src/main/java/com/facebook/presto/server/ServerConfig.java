@@ -22,6 +22,8 @@ import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class ServerConfig
 {
+    public static final String SERVER_VERSION_CONFIG = "presto.version";
+
     private boolean coordinator = true;
     private String prestoVersion = getClass().getPackage().getImplementationVersion();
     private String dataSources;
@@ -47,9 +49,10 @@ public class ServerConfig
         return prestoVersion;
     }
 
-    @Config("presto.version")
+    @Config(SERVER_VERSION_CONFIG)
     public ServerConfig setPrestoVersion(String prestoVersion)
     {
+        System.out.println("ServerConfig version: " + getClass().getPackage().getImplementationVersion());
         this.prestoVersion = prestoVersion;
         return this;
     }
